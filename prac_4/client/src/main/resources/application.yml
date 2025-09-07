@@ -1,0 +1,8 @@
+server:
+  rsocket:
+    host: localhost
+    port: 7000
+
+logging:
+  level:
+    org.springframework.rsocket: info 
