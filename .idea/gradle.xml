@@ -10,6 +10,9 @@
           <set>
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/prac_4" />
+            <option value="$PROJECT_DIR$/prac_4/client" />
+            <option value="$PROJECT_DIR$/prac_4/server" />
+            <option value="$PROJECT_DIR$/prac_5" />
           </set>
         </option>
       </GradleProjectSettings>

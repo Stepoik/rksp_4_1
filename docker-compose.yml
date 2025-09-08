@@ -1,0 +1,61 @@
+version: "3.9"
+services:
+  app1:
+    build: .
+    image: prac5-app:latest
+    container_name: prac5-app-1
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - STORAGE_LOCATION=/app/uploads
+    volumes:
+      - uploads-data:/app/uploads
+
+  app2:
+    image: prac5-app:latest
+    container_name: prac5-app-2
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - STORAGE_LOCATION=/app/uploads
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      - app1
+
+  app3:
+    image: prac5-app:latest
+    container_name: prac5-app-3
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - STORAGE_LOCATION=/app/uploads
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      - app1
+
+  app4:
+    image: prac5-app:latest
+    container_name: prac5-app-4
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - STORAGE_LOCATION=/app/uploads
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      - app1
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: prac5-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - app1
+      - app2
+      - app3
+      - app4
+    volumes:
+      - ./prac_5/nginx.conf:/etc/nginx/nginx.conf:ro
+
+volumes:
+  uploads-data:
+
