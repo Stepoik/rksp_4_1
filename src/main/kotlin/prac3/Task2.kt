@@ -13,8 +13,8 @@ fun first() {
     val numsProducer = createNumsProducer(1000)
 
     numsProducer
-        .scan(0) { t1, t2 -> t1 + 1 }
-        .blockingSubscribe { t1 -> println(t1) }
+        .reduce(0) { t1, t2 -> t1 + 1 }
+        .blockingSubscribe(::println)
 }
 
 fun second() {
@@ -25,9 +25,7 @@ fun second() {
         .subscribeOn(Schedulers.io())
         .delay(10)
     merge(numsProducer1, numsProducer2)
-        .blockingSubscribe {
-            println(it)
-        }
+        .blockingSubscribe(::println)
 }
 
 fun third() {
