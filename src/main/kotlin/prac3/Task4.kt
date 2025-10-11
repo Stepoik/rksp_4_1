@@ -47,6 +47,7 @@ fun startConsumer(files: Flowable<File>, type: FileType): Flowable<File> {
         .filter { it.type == type }
         .flatMap {
             Flowable.fromCallable {
+                println(Thread.currentThread())
                 processFile(it)
             }.subscribeOn(Schedulers.computation())
         }

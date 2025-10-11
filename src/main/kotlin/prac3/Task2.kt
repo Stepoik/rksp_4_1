@@ -20,6 +20,7 @@ fun first() {
 fun second() {
     val numsProducer1 = createNumsProducer(1000)
         .subscribeOn(Schedulers.io())
+        .observeOn(Schedulers.computation())
         .delay(10)
     val numsProducer2 = createNumsProducer(1000)
         .subscribeOn(Schedulers.io())

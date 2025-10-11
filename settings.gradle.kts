@@ -6,3 +6,4 @@ rootProject.name = "rksp_4_1"
 include(":prac_4:client")
 include(":prac_4:server")
 include(":prac_5")
+include(":prac_7")
