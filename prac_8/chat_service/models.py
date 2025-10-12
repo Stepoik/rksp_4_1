@@ -49,6 +49,7 @@ class Measurement(BaseModel):
     updated_at: Optional[datetime] = None
     results: Optional[Dict[str, float]] = None
     errors: Optional[List[str]] = None
+    llm_answer: Optional[str] = None
 
     class Config:
         orm_mode = True

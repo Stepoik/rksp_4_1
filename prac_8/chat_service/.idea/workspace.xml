@@ -5,10 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="7eb9b1f6-0b7a-4185-b2ab-01bc50a62769" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/../.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/../ecg_analysis_service/ecg.csv" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/../ecg_analysis_service/model.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../../.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/../../.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/models.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/services.py" beforeDir="false" afterPath="$PROJECT_DIR$/services.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -67,7 +65,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1760281719848</updated>
-      <workItem from="1760281720872" duration="4694000" />
+      <workItem from="1760281720872" duration="5288000" />
     </task>
     <servers />
   </component>

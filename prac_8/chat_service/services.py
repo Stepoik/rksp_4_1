@@ -297,7 +297,8 @@ class MeasurementService:
             created_at=measurement_db.created_at,
             updated_at=measurement_db.updated_at,
             results=results,
-            errors=errors
+            errors=errors,
+            llm_answer=measurement_db.llm_answer
         )
 
     def start_rabbit_listener(self):
@@ -325,7 +326,7 @@ class MeasurementService:
                     m.results = json.dumps(results)
                     m.status = Status.done
                     m.updated_at = datetime.now()
-                    m.llm_answer = resp
+                    m.llm_answer = llm_answer
                     self.db.commit()
                     self.db.refresh(m)
                     # пушим WS, если есть event loop

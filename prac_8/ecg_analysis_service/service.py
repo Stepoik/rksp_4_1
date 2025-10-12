@@ -68,7 +68,7 @@ def run_llm(features: dict, meta: dict) -> str:
     if not LLM_ENABLED:
         raise RuntimeError("LLM disabled: OPENAI_API_KEY или пакет openai не настроены")
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENAI_API_KEY)
 
     p = build_llm_prompt(features, meta)
     resp = client.chat.completions.create(
