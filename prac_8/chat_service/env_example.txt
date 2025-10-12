@@ -1,0 +1,12 @@
+# Database
+DATABASE_URL=postgresql://user:password@localhost/ecg_measurements
+
+# MinIO
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+ECG_BUCKET=ecg-bucket
+
+# RabbitMQ
+RABBIT_URL=amqp://guest:guest@localhost:5672/
+REQUEST_QUEUE=ecg_requests

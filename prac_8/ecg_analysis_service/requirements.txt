@@ -1,0 +1,13 @@
+python3-pika
+torch
+torch-ecg
+numpy
+pandas
+neurokit2
+scipy
+scikit-learn
+pika  # RabbitMQ client
+minio
+python-dotenv
+peakutils
+openai
