@@ -3,12 +3,14 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, constr
 from sqlalchemy import Column, Integer, String, create_engine, select, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from passlib.context import CryptContext
 from jose import jwt, JWTError
+from starlette.responses import JSONResponse
 
 # ===================== Конфиг =====================
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
@@ -20,7 +22,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./auth.db")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# ===================== БД =====================
 Base = declarative_base()
 engine = create_engine(
     DATABASE_URL,
@@ -68,7 +69,6 @@ class MeOut(BaseModel):
     username: str
     email: EmailStr
 
-# ===================== Утилиты =====================
 def get_db():
     db: Session = SessionLocal()
     try:
@@ -141,23 +141,21 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
 
 @app.post("/login", response_model=TokenOut)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # OAuth2PasswordRequestForm ожидает fields: username, password (а не email)
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(status_code=401, detail="Неверные учетные данные")
-    token, expires_at = create_access_token(subject=user.username)
+    token, expires_at = create_access_token(subject=str(user.id))
     return TokenOut(access_token=token, expires_at=expires_at)
 
-@app.get("/verify", response_model=VerifyOut)
+@app.get("/verify")
 def verify(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        sub = payload.get("sub")
-        exp = payload.get("exp")
-        exp_dt = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else None
-        return VerifyOut(active=True, sub=sub, exp=exp_dt)
-    except JWTError:
-        return VerifyOut(active=False)
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    sub = payload.get("sub")
+    return JSONResponse(
+        content={"active": True},
+        headers={"X-User-Id": str(sub)},
+        status_code=200,
+    )
 
 @app.get("/me", response_model=MeOut)
 def me(current_user: User = Depends(get_current_user)):

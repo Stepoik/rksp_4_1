@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Вход</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1 id="title">Вход</h1>
+    <form id="login-form" method="post" action="/auth/login">
+      <label for="username">Логин</label>
+      <input id="username" name="username" type="text" required />
+
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" required />
+
+      <button type="submit">Войти</button>
+    </form>
+
+    <p class="hint">Форма отправляется на /auth/login. Поля: username, password.</p>
+
+    <hr style="margin:18px 0; border: none; border-top: 1px solid #334155;" />
+
+    <h2 style="margin:0 0 10px; font-size:18px;" id="reg-title">Регистрация</h2>
+    <form id="register-form" action="/auth/register" style="display:none;">
+      <label for="reg-username">Логин</label>
+      <input id="reg-username" name="username" type="text" minlength="3" maxlength="64" required />
+
+      <label for="reg-email">Email</label>
+      <input id="reg-email" name="email" type="email" required />
+
+      <label for="reg-password">Пароль</label>
+      <input id="reg-password" name="password" type="password" minlength="8" maxlength="128" required />
+
+      <button type="submit">Зарегистрироваться</button>
+    </form>
+
+    <p class="hint" id="toggle-text">
+      Нет аккаунта? <a href="#" id="to-register">Зарегистрируйтесь</a>
+    </p>
+  </div>
+  <script>
+    const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
+    const toRegister = document.getElementById('to-register');
+    const title = document.getElementById('title');
+    const regTitle = document.getElementById('reg-title');
+    const toggleText = document.getElementById('toggle-text');
+
+    function showLogin() {
+      loginForm.style.display = '';
+      registerForm.style.display = 'none';
+      title.textContent = 'Вход';
+      regTitle.style.display = 'none';
+      toggleText.innerHTML = 'Нет аккаунта? <a href="#" id="to-register">Зарегистрируйтесь</a>';
+      toggleText.querySelector('#to-register').addEventListener('click', (e) => { e.preventDefault(); showRegister(); });
+    }
+    function showRegister() {
+      loginForm.style.display = 'none';
+      registerForm.style.display = '';
+      title.textContent = 'Регистрация';
+      regTitle.style.display = 'none';
+      toggleText.innerHTML = 'Уже есть аккаунт? <a href="#" id="to-login">Войти</a>';
+      toggleText.querySelector('#to-login').addEventListener('click', (e) => { e.preventDefault(); showLogin(); });
+    }
+
+    if (toRegister) {
+      toRegister.addEventListener('click', (e) => { e.preventDefault(); showRegister(); });
+    }
+
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const fd = new FormData(form);
+      const params = new URLSearchParams();
+      for (const [k,v] of fd.entries()) params.append(k, v);
+      try {
+        const res = await fetch(form.action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString()
+        });
+        const text = await res.text();
+        try {
+          const json = JSON.parse(text);
+          if (json && json.access_token) {
+            localStorage.setItem('access_token', json.access_token);
+            alert('Вход выполнен');
+            location.href = '/upload';
+          } else {
+            alert(text);
+          }
+        } catch {
+          alert(text);
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err);
+      }
+    });
+
+    registerForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const payload = {
+        username: form.username.value.trim(),
+        email: form.email.value.trim(),
+        password: form.password.value
+      };
+      try {
+        const res = await fetch(form.getAttribute('action'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const text = await res.text();
+        try {
+          const json = JSON.parse(text);
+          if (res.ok) {
+            alert('Регистрация успешна. Теперь войдите.');
+            showLogin();
+          } else {
+            alert(json.detail || text);
+          }
+        } catch {
+          alert(text);
+        }
+      } catch (err) {
+        alert('Ошибка: ' + err);
+      }
+    });
+  </script>
+</body>
+</html>
+
+

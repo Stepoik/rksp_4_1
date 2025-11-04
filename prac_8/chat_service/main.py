@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Optional
 
@@ -15,11 +16,11 @@ load_dotenv()
 
 app = FastAPI(title="ECG Measurements API", version="1.0")
 
-# Initialize database
 init_db()
 
 @app.on_event("startup")
 async def startup_event():
+    MeasurementService(next(get_db()), asyncio.get_running_loop()).start_rabbit_listener()
     print("ECG Measurements API started")
 
 
@@ -32,7 +33,6 @@ async def create_measurement_from_file(
     user_id: str = Header(alias="user-id"),
     db: Session = Depends(get_db)
 ):
-    """Create ECG measurement from uploaded file"""
     try:
         # Validate state
         try:
@@ -44,7 +44,7 @@ async def create_measurement_from_file(
         if not (50 <= fs <= 2000):
             raise HTTPException(status_code=400, detail="fs must be between 50 and 2000")
         
-        measurement_service = MeasurementService(db)
+        measurement_service = MeasurementService(db, asyncio.get_running_loop())
         
         # Read file content
         content = await file.read()
@@ -72,7 +72,6 @@ async def create_measurement_from_json(
     user_id: str = Header(alias="user-id"),
     db: Session = Depends(get_db)
 ):
-    """Create ECG measurement from JSON array"""
     try:
         # Validate required fields
         if "ecg" not in request or "fs" not in request or "state" not in request:
@@ -94,7 +93,7 @@ async def create_measurement_from_json(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid state. Must be one of: exercise, rest, daily")
         
-        measurement_service = MeasurementService(db)
+        measurement_service = MeasurementService(db, asyncio.get_running_loop())
         
         # Create measurement
         measurement_id = str(uuid.uuid4())
@@ -120,8 +119,7 @@ async def get_user_measurements(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    """Get all measurements for the current user"""
-    measurement_service = MeasurementService(db)
+    measurement_service = MeasurementService(db, asyncio.get_running_loop())
     measurements = measurement_service.get_user_measurements(user_id, limit, offset)
     
     # Get total count
@@ -141,8 +139,7 @@ async def get_measurement(
     user_id: str = Header(alias="user-id"),
     db: Session = Depends(get_db)
 ):
-    """Get measurement by ID (only if user owns it)"""
-    measurement_service = MeasurementService(db)
+    measurement_service = MeasurementService(db, asyncio.get_running_loop())
     measurement = measurement_service.get_measurement(measurement_id, user_id)
     
     if not measurement:
@@ -157,10 +154,8 @@ async def update_measurement(
     user_id: str = Header(alias="user-id"),
     db: Session = Depends(get_db)
 ):
-    """Update measurement state (only if user owns it)"""
-    measurement_service = MeasurementService(db)
+    measurement_service = MeasurementService(db, asyncio.get_running_loop())
     
-    # Check if measurement exists and user owns it
     existing = measurement_service.get_measurement(measurement_id, user_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Measurement not found")
@@ -179,7 +174,6 @@ async def update_measurement(
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    """WebSocket endpoint for real-time updates"""
     await websocket_manager.connect(websocket, user_id)
     try:
         while True:
@@ -192,5 +186,4 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    MeasurementService(next(get_db())).start_rabbit_listener()
     uvicorn.run(app, host="0.0.0.0", port=8080)

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Измерение</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .kv { display:grid; grid-template-columns: 140px 1fr; gap:8px 14px; }
+    .kv div { padding:4px 0; }
+    .actions { margin-top: 14px; }
+    pre.log {
+      background:#0b1220;
+      color:#d1d5db;
+      padding:12px;
+      border-radius:8px;
+      border:1px solid #334155;
+      white-space: pre-wrap;      /* перенос длинных строк */
+      word-wrap: break-word;      /* перенос длинных слов */
+      overflow:auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Измерение</h1>
+    <div class="kv" id="details"></div>
+    <div class="row" style="margin-top:16px;">
+      <h3 style="margin:0 0 8px;">Описание (LLM)</h3>
+      <pre id="llm" class="log" style="height:auto; min-height:80px;"></pre>
+    </div>
+    <div class="actions">
+      <a href="/upload">← назад к загрузкам</a>
+    </div>
+  </div>
+
+  <script>
+    const measurementId = {{ measurement_id | tojson | safe }};
+
+    async function ensureToken() {
+      const token = localStorage.getItem('access_token');
+      if (!token) { alert('Сначала войдите'); location.href = '/login'; throw new Error('no-token'); }
+      return token;
+    }
+
+    function put(details, k, v) {
+      const wrap = document.getElementById('details');
+      const kEl = document.createElement('div'); kEl.style.color = '#94a3b8'; kEl.textContent = k;
+      const vEl = document.createElement('div'); vEl.textContent = v == null ? '' : String(v);
+      wrap.appendChild(kEl); wrap.appendChild(vEl);
+    }
+
+    async function loadMeasurement() {
+      const token = await ensureToken();
+      try {
+        const res = await fetch(`/v1/measurements/${encodeURIComponent(measurementId)}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json().catch(() => null);
+        const box = document.getElementById('details');
+        box.innerHTML = '';
+        if (res.ok && data) {
+          put(box, 'ID', data.id || data.measurement_id || measurementId);
+          put(box, 'Имя файла', data.filename || '');
+          put(box, 'Состояние', data.state || '');
+          put(box, 'fs', data.fs || '');
+          put(box, 'Размер', data.size || '');
+          put(box, 'Создано', data.created_at || data.created || '');
+          if (data.meta) put(box, 'Meta', typeof data.meta === 'string' ? data.meta : JSON.stringify(data.meta));
+          // LLM answer
+          const llm = document.getElementById('llm');
+          const val = (data.llm_answer != null) ? data.llm_answer : '';
+          try {
+            // если это JSON — красиво отформатируем
+            const obj = typeof val === 'string' ? JSON.parse(val) : val;
+            llm.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+          } catch {
+            llm.textContent = String(val);
+          }
+        } else {
+          put(box, 'Ошибка', (data && data.detail) ? data.detail : 'Не удалось получить данные');
+          document.getElementById('llm').textContent = '';
+        }
+      } catch (e) {
+        const box = document.getElementById('details');
+        box.innerHTML = '';
+        put(box, 'Ошибка сети', String(e));
+        document.getElementById('llm').textContent = '';
+      }
+    }
+
+    loadMeasurement();
+  </script>
+</body>
+</html>
+
+

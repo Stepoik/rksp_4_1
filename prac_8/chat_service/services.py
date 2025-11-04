@@ -13,7 +13,6 @@ import pika
 from datetime import datetime
 from websocket_manager import websocket_manager
 
-
 class MinIOService:
     def __init__(self):
         self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
@@ -93,12 +92,12 @@ class RabbitMQService:
         channel.basic_consume(queue=self.response_queue, on_message_callback=_cb)
         channel.start_consuming()
 
-
 class MeasurementService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, loop):
         self.db = db
         self.minio_service = MinIOService()
         self.rabbitmq_service = RabbitMQService()
+        self.loop = loop
 
     async def create_measurement_from_file(
             self,
@@ -302,16 +301,15 @@ class MeasurementService:
         )
 
     def start_rabbit_listener(self):
-        """Стартуем фоновый поток, слушающий ecg_responses"""
 
         def _handle_response(ch, method, props, body: bytes):
             print("Handle answer")
             try:
                 resp = json.loads(body.decode("utf-8"))
             except Exception as e:
+                print(e)
                 # невалидный json — игнор/лог
                 return
-
             # measurement_id берём из correlation_id; если нет — из тела
             measurement_id = props.correlation_id or resp.get("measurement_id")
             if not measurement_id:
@@ -331,13 +329,12 @@ class MeasurementService:
                     self.db.refresh(m)
                     # пушим WS, если есть event loop
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(
-                            websocket_manager.broadcast_results_update(m.user_id, measurement_id, results)
+                        asyncio.run_coroutine_threadsafe(
+                            websocket_manager.broadcast_results_update(m.user_id, measurement_id, results),
+                            self.loop
                         )
-                    except RuntimeError:
-                        # нет активного цикла — пропускаем или логируем
-                        pass
+                    except Exception as e:
+                        print(e)
             else:
                 err = resp.get("error", "unknown error")
                 m = self.db.query(MeasurementDB).filter(MeasurementDB.id == measurement_id).first()

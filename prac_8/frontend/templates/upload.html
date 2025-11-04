@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Загрузка ЭКГ</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .row { margin-top: 10px; }
+    pre.log { background:#0b1220; color:#d1d5db; padding:12px; border-radius:8px; height:180px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Загрузка ЭКГ</h1>
+
+    <form id="upload-form">
+      <div class="row">
+        <label for="file">ECG файл (CSV)</label>
+        <input id="file" name="file" type="file" accept=".csv" required />
+      </div>
+
+      <div class="row">
+        <label for="fs">Частота дискретизации (fs)</label>
+        <input id="fs" name="fs" type="number" min="50" max="2000" step="1" required />
+      </div>
+
+      <div class="row">
+        <label for="state">Состояние</label>
+        <select id="state" name="state" required>
+          <option value="exercise">exercise</option>
+          <option value="rest" selected>rest</option>
+          <option value="daily">daily</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="meta">Мета (опционально)</label>
+        <input id="meta" name="meta" type="text" placeholder='{"note":"пример"}' />
+      </div>
+
+      <button type="submit">Загрузить</button>
+    </form>
+
+    <div class="row">
+      <h3>События (WebSocket)</h3>
+      <pre id="log" class="log"></pre>
+    </div>
+
+    <div class="row">
+      <h3>Мои загрузки</h3>
+      <div style="display:flex; gap:8px; align-items:center; margin: 6px 0 10px;">
+        <button id="refresh-list" type="button">Обновить список</button>
+        <span class="hint" id="list-hint"></span>
+      </div>
+      <div id="uploads" style="border:1px solid #334155; border-radius:8px; padding:10px; max-height:260px; overflow:auto;"></div>
+    </div>
+
+  </div>
+
+  <script>
+    function appendLog(msg) {
+      const pre = document.getElementById('log');
+      pre.textContent += (msg + "\n");
+      pre.scrollTop = pre.scrollHeight;
+    }
+
+    function parseJwtSub(token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1] || ''));
+        return payload.sub || '';
+      } catch { return ''; }
+    }
+
+    async function ensureToken() {
+      const token = localStorage.getItem('access_token');
+      if (!token) {
+        alert('Сначала войдите');
+        location.href = '/login';
+        throw new Error('no-token');
+      }
+      return token;
+    }
+
+    function renderUploads(list) {
+      const box = document.getElementById('uploads');
+      if (!Array.isArray(list) || !list.length) {
+        box.innerHTML = '<div class="hint">Пока нет загрузок</div>';
+        return;
+      }
+      const items = list.map((m) => {
+        const id = m.id || m.measurement_id || '';
+        const name = m.filename || m.name || '';
+        const state = m.state || '';
+        const created = (m.created_at || m.created || m.timestamp || '').toString();
+        return `<a href="/measurement/${encodeURIComponent(id)}" style="text-decoration:none; color:inherit; display:block;">
+          <div style="padding:8px 6px; border-bottom:1px solid #1f2937;">
+            <div style="font-weight:600; color:#e5e7eb;">${name || 'Без имени'} <span style="color:#94a3b8; font-weight:400;">${state ? '('+state+')' : ''}</span></div>
+            <div style="color:#9ca3af; font-size:12px;">id: ${id}${created ? ' · ' + created : ''}</div>
+          </div>
+        </a>`;
+      }).join('');
+      box.innerHTML = items;
+    }
+
+    async function loadUploads() {
+      const token = await ensureToken();
+      const hint = document.getElementById('list-hint');
+      hint.textContent = 'загрузка...';
+      try {
+        const res = await fetch('/v1/measurements?limit=50&offset=0', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data) {
+          renderUploads(data.measurements || []);
+          hint.textContent = `всего: ${data.total ?? (data.measurements?.length || 0)}`;
+        } else {
+          hint.textContent = 'ошибка';
+        }
+      } catch (e) {
+        hint.textContent = 'ошибка сети';
+      }
+    }
+
+    async function openWs(token) {
+      const userId = parseJwtSub(token);
+      if (!userId) {
+        appendLog('Не получилось определить пользователя из токена');
+        return;
+      }
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${scheme}://${location.host}/ws/${encodeURIComponent(userId)}?token=${encodeURIComponent(token)}`;
+      const ws = new WebSocket(wsUrl);
+      ws.onopen = () => appendLog('WS: соединение установлено');
+      ws.onmessage = (ev) => appendLog('WS ← ' + ev.data);
+      ws.onclose = () => appendLog('WS: соединение закрыто');
+      ws.onerror = (e) => appendLog('WS: ошибка');
+      return ws;
+    }
+
+    (async () => {
+      const token = await ensureToken();
+      window._ws = await openWs(token);
+      loadUploads();
+    })();
+
+    document.getElementById('upload-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const token = await ensureToken();
+      const fd = new FormData(e.target);
+      try {
+        const res = await fetch('/v1/measurements', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: fd
+        });
+        const text = await res.text();
+        try {
+          const json = JSON.parse(text);
+          appendLog('Загрузка успешна: ' + JSON.stringify(json));
+          // Обновим список после успешной загрузки
+          loadUploads();
+        } catch {
+          appendLog('Ответ: ' + text);
+        }
+      } catch (err) {
+        appendLog('Ошибка загрузки: ' + err);
+      }
+    });
+
+    document.getElementById('refresh-list').addEventListener('click', () => {
+      loadUploads();
+    });
+  </script>
+</body>
+</html>
+
+
