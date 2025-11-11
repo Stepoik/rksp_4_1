@@ -5,7 +5,6 @@ from torch_ecg.models import ECG_CRNN  # модель для последова�
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# твои классы. пример: норм, AF, PVC
 LABELS = ["Normal", "AF", "PVC"]
 
 def standardize_fs(x: np.ndarray, fs_src: int, fs_tgt: int = 250):

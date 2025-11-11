@@ -12,7 +12,6 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from starlette.responses import JSONResponse
 
-# ===================== Конфиг =====================
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
@@ -40,7 +39,6 @@ class User(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# ===================== Схемы =====================
 Username = constr(strip_whitespace=True, min_length=3, max_length=64)
 Password = constr(min_length=8, max_length=128)
 

@@ -34,22 +34,18 @@ async def create_measurement_from_file(
     db: Session = Depends(get_db)
 ):
     try:
-        # Validate state
         try:
             state_enum = State(state)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid state. Must be one of: exercise, rest, daily")
         
-        # Validate fs range
         if not (50 <= fs <= 2000):
             raise HTTPException(status_code=400, detail="fs must be between 50 and 2000")
         
         measurement_service = MeasurementService(db, asyncio.get_running_loop())
         
-        # Read file content
         content = await file.read()
         
-     # Create measurement
         measurement_id = str(uuid.uuid4())
         measurement = await measurement_service.create_measurement_from_file(
             measurement_id=measurement_id,
@@ -73,21 +69,17 @@ async def create_measurement_from_json(
     db: Session = Depends(get_db)
 ):
     try:
-        # Validate required fields
         if "ecg" not in request or "fs" not in request or "state" not in request:
             raise HTTPException(status_code=400, detail="ecg, fs, and state are required")
         
-        # Validate ecg array
         ecg_data = request["ecg"]
         if not isinstance(ecg_data, list) or len(ecg_data) < 10:
             raise HTTPException(status_code=400, detail="ecg must be an array with at least 10 elements")
         
-        # Validate fs
         fs = request["fs"]
         if not isinstance(fs, int) or not (50 <= fs <= 2000):
             raise HTTPException(status_code=400, detail="fs must be an integer between 50 and 2000")
         
-        # Validate state
         try:
             state_enum = State(request["state"])
         except ValueError:
@@ -95,7 +87,6 @@ async def create_measurement_from_json(
         
         measurement_service = MeasurementService(db, asyncio.get_running_loop())
         
-        # Create measurement
         measurement_id = str(uuid.uuid4())
         measurement = await measurement_service.create_measurement_from_json(
             measurement_id=measurement_id,
@@ -160,7 +151,6 @@ async def update_measurement(
     if not existing:
         raise HTTPException(status_code=404, detail="Measurement not found")
     
-    # Update state if provided
     if "state" in request:
         try:
             state_enum = State(request["state"])
@@ -177,9 +167,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket_manager.connect(websocket, user_id)
     try:
         while True:
-            # Keep connection alive
             data = await websocket.receive_text()
-            # Echo back for ping/pong
             await websocket.send_text(data)
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket, user_id)
