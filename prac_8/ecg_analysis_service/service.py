@@ -5,12 +5,15 @@ from dotenv import load_dotenv
 from minio import Minio
 import pika
 import pandas as pd
+
+from config import ConfigClient
 from model import DEFAULT_MODEL, infer_ecg_1d
 
 from openai import OpenAI
 
 load_dotenv()
 
+CONFIG = ConfigClient()
 # RabbitMQ settings
 RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost:5672/%2F")
 REQUEST_QUEUE = os.getenv("REQUEST_QUEUE", "ecg_requests")
@@ -23,7 +26,7 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 
 # LLM settings
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")  # можно поменять на свой
+LLM_MODEL = CONFIG.get("LLM_MODEL", "gpt-4o-mini")  # можно поменять на свой
 LLM_ENABLED = bool(OPENAI_API_KEY and OpenAI)
 
 

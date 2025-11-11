@@ -1,554 +1,1089 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: app
----
+# ==============================================================================
+# 1. SECRETS - Секретные данные
+# ==============================================================================
 apiVersion: v1
 kind: Secret
 metadata:
   name: app-secrets
-  namespace: app
 type: Opaque
 stringData:
-  SECRET_KEY: "dev-secret"
-  POSTGRES_PASSWORD: "password"
-  RABBIT_USER: "guest"
-  RABBIT_PASS: "guest"
-  MINIO_ACCESS_KEY: "minioadmin"
-  MINIO_SECRET_KEY: "minioadmin"
-  OPENAI_API_KEY: ""
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-  namespace: app
-data:
+  # PostgreSQL
   POSTGRES_DB: "postgres"
   POSTGRES_USER: "user"
-  AUTH_DATABASE_URL: "postgresql://user:password@postgres:5432/postgres"
-  CHAT_DATABASE_URL: "postgresql://user:password@postgres:5432/postgres"
-  RABBIT_URL: "amqp://guest:guest@rabbitmq:5672/%2F"
+  POSTGRES_PASSWORD: "password"
+  
+  # Auth Service
+  SECRET_KEY: "dev-secret"
+  
+  # MinIO
+  MINIO_ACCESS_KEY: "minioadmin"
+  MINIO_SECRET_KEY: "minioadmin"
+  
+  # RabbitMQ
+  RABBITMQ_DEFAULT_USER: "guest"
+  RABBITMQ_DEFAULT_PASS: "guest"
+  
+  # OpenAI (замените на реальный ключ)
+  OPENAI_API_KEY: "your-openai-api-key-here"
+
+---
+# ==============================================================================
+# 2. CONFIGMAPS - Конфигурационные данные
+# ==============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-static-config
+data:
+  MINIO_ENDPOINT: "minio:9000"
+  ECG_BUCKET: "ecg-bucket"
   REQUEST_QUEUE: "ecg_requests"
   RESPONSE_QUEUE: "ecg_responses"
-  ECG_BUCKET: "ecg-bucket"
-  MINIO_ENDPOINT: "minio:9000"
-  NGINX_CONF: |
-    worker_processes  1;
-    events { worker_connections 1024; }
-    http {
-      sendfile on;
-      upstream auth { server auth-service:8000; }
-      upstream chat { server chat-service:8080; }
-      upstream ecg  { server ecg-analysis-service:8080; }
-      upstream front { server frontend:8000; }
 
-      server {
-        listen 80;
-
-        location /api/auth/ { proxy_pass http://auth; }
-        location /api/chat/ { proxy_pass http://chat; }
-        location /api/ecg/  { proxy_pass http://ecg;  }
-
-        # UI прокси (необязательно, но удобно)
-        location /rabbit/   { proxy_pass http://rabbitmq:15672/; }
-        location /minio/    { proxy_pass http://minio:9001/; }
-
-        location / { proxy_pass http://front; }
-      }
+---
+# Nginx Configuration File
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
     }
-  INIT_SQL: |
-    -- создавай нужные роли/БД тут, если надо
-    -- пример: CREATE USER auth_user WITH PASSWORD 'password';
-    --         CREATE DATABASE auth_db OWNER auth_user;
+    
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        
+        # Logging
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for" '
+                        'rt=$request_time uct="$upstream_connect_time" '
+                        'uht="$upstream_header_time" urt="$upstream_response_time"';
+        
+        access_log /var/log/nginx/access.log main;
+        error_log /var/log/nginx/error.log warn;
+        
+        # Basic settings
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 100M;
+        
+        # Gzip compression
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+        
+        # Upstream servers - используем имена сервисов Kubernetes
+        upstream auth_service {
+            server auth-service:8000;
+            keepalive 32;
+        }
+        upstream frontend {
+            server frontend:8000;
+            keepalive 16;
+        }
+        
+        upstream chat_service {
+            server chat-service:8080;
+            keepalive 32;
+        }
+        
+        upstream ecg_analysis_service {
+            server ecg-analysis-service:8080;
+            keepalive 32;
+        }
+        
+        # Auth validation endpoint
+        upstream auth_verify {
+            server auth-service:8000;
+        }
+        
+        # Main server block
+        server {
+            listen 80;
+            server_name localhost;
+            
+            # Security headers
+            add_header X-Frame-Options DENY;
+            add_header X-Content-Type-Options nosniff;
+            add_header X-XSS-Protection "1; mode=block";
+            add_header Referrer-Policy "strict-origin-when-cross-origin";
+            
+            # CORS headers
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, user_id, Accept";
+            add_header Access-Control-Max-Age 3600;
+            
+            # Handle preflight requests
+            location / {
+                if ($request_method = 'OPTIONS') {
+                    add_header Access-Control-Allow-Origin "*";
+                    add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS";
+                    add_header Access-Control-Allow-Headers "Authorization, Content-Type, user_id, Accept";
+                    add_header Access-Control-Max-Age 3600;
+                    add_header Content-Length 0;
+                    add_header Content-Type text/plain;
+                    return 204;
+                }
+                # Redirect root to login page
+                return 302 /login;
+            }
+            
+            # Auth service routes (no auth required for these endpoints)
+            location /auth/ {
+                limit_req zone=auth burst=10 nodelay;
+                
+                # Remove /auth prefix and proxy to auth service
+                rewrite ^/auth/(.*) /$1 break;
+                
+                proxy_pass http://auth_service;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # Timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+            }
+    
+            # Public login UI
+            location = /login {
+                proxy_pass http://frontend/login;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+    
+            # Public upload UI
+            location = /upload {
+                proxy_pass http://frontend/upload;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+    
+            # Public measurement details UI
+            location /measurement/ {
+                proxy_pass http://frontend$request_uri;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+    
+            location /static/ {
+                proxy_pass http://frontend/static/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+            
+            # Protected routes - require authentication
+            location ~ ^/(v1|api)/ {
+                limit_req zone=api burst=20 nodelay;
+                
+                # Extract token from Authorization header
+                set $auth_header $http_authorization;
+                if ($auth_header ~* "^Bearer\s+(.+)$") {
+                    set $token $1;
+                }
+                
+                # If no token, return 401
+                if ($auth_header = "") {
+                    return 401 '{"error": "Authorization header required"}';
+                }
+                
+                # Verify token with auth service
+                auth_request /auth-verify;
+                
+                auth_request_set $user_id $upstream_http_x_user_id;
+                auth_request_set $auth_status $upstream_status;
+    
+                # если user_id пуст — не пускаем дальше
+                if ($user_id = "") { return 401; }
+    
+                proxy_set_header user-id $user_id;
+    
+                # Route to appropriate service
+                location ~ ^/v1/measurements {
+                    proxy_pass http://chat_service;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_set_header Authorization $http_authorization;
+                    proxy_set_header user-id $user_id;
+    
+                    # Timeouts for file uploads
+                    proxy_connect_timeout 10s;
+                    proxy_send_timeout 300s;
+                    proxy_read_timeout 300s;
+                }
+    
+                location ~ ^/v1/analysis {
+                    proxy_pass http://ecg_analysis_service;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                    proxy_set_header Authorization $http_authorization;
+    
+                    # Timeouts
+                    proxy_connect_timeout 5s;
+                    proxy_send_timeout 60s;
+                    proxy_read_timeout 60s;
+                }
+            }
+            
+            location /ws/ {
+                set $ws_token $arg_token;
+                if ($http_authorization ~* "^Bearer\s+(.+)$") {
+                    set $ws_token $1;
+                }
+                
+                # Verify token
+                auth_request /auth-verify-ws;
+                
+                # Proxy to chat service WebSocket
+                proxy_pass http://chat_service;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # WebSocket timeouts
+                proxy_read_timeout 86400s;
+                proxy_send_timeout 86400s;
+            }
+            
+            # Internal auth verification endpoint
+            location = /auth-verify {
+                internal;
+                proxy_pass http://auth_verify/verify;
+                proxy_pass_request_body off;
+                proxy_set_header Content-Length "";
+                proxy_set_header X-Original-URI $request_uri;
+                proxy_set_header X-Original-Method $request_method;
+                proxy_set_header Authorization $http_authorization;
+            }
+            
+            # Internal auth verification for WebSocket
+            location = /auth-verify-ws {
+                internal;
+                proxy_pass http://auth_verify/verify;
+                proxy_pass_request_body off;
+                proxy_set_header Content-Length "";
+                proxy_set_header Authorization "Bearer $ws_token";
+            }
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Metrics endpoint (if needed)
+            location /metrics {
+                access_log off;
+                return 200 "# nginx metrics\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Error pages
+            error_page 401 /401.json;
+            error_page 403 /403.json;
+            error_page 404 /404.json;
+            error_page 500 502 503 504 /50x.json;
+            
+            location = /401.json {
+                internal;
+                return 401 '{"error": "Unauthorized", "message": "Invalid or missing token"}';
+                add_header Content-Type application/json;
+            }
+            
+            location = /403.json {
+                internal;
+                return 403 '{"error": "Forbidden", "message": "Access denied"}';
+                add_header Content-Type application/json;
+            }
+            
+            location = /404.json {
+                internal;
+                return 404 '{"error": "Not Found", "message": "Endpoint not found"}';
+                add_header Content-Type application/json;
+            }
+            
+            location = /50x.json {
+                internal;
+                return 500 '{"error": "Internal Server Error", "message": "Service temporarily unavailable"}';
+                add_header Content-Type application/json;
+            }
+        }
+    }
+
 ---
+# Postgres Init Script
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nginx-conf
-  namespace: app
+  name: postgres-init-script
 data:
-  nginx.conf: |-
-    {{NGINX_CONF}}
+  init.sql: |
+    -- Create databases for different services
+    CREATE DATABASE auth_db;
+    CREATE DATABASE chat_db;
+    
+    -- Create users for each service
+    CREATE USER auth_user WITH PASSWORD 'auth_password';
+    CREATE USER chat_user WITH PASSWORD 'chat_password';
+    
+    -- Grant privileges
+    GRANT ALL PRIVILEGES ON DATABASE auth_db TO auth_user;
+    GRANT ALL PRIVILEGES ON DATABASE chat_db TO chat_user;
+    
+    -- Connect to auth_db and create schema
+    \c auth_db;
+    GRANT ALL ON SCHEMA public TO auth_user;
+    
+    -- Connect to chat_db and create schema
+    \c chat_db;
+    GRANT ALL ON SCHEMA public TO chat_user;
+
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-init
-  namespace: app
-data:
-  init.sql: |-
-    {{INIT_SQL}}
----
+# ==============================================================================
+# 3. PERSISTENT VOLUME CLAIMS (PVC)
+# ==============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
-  namespace: app
 spec:
-  accessModes: ["ReadWriteOnce"]
-  resources: { requests: { storage: 5Gi } }
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: minio-pvc
-  namespace: app
 spec:
-  accessModes: ["ReadWriteOnce"]
-  resources: { requests: { storage: 10Gi } }
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: rabbitmq-pvc
-  namespace: app
 spec:
-  accessModes: ["ReadWriteOnce"]
-  resources: { requests: { storage: 2Gi } }
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
 ---
+# ==============================================================================
+# 4. INFRASTRUCTURE DEPLOYMENTS (Postgres, MinIO, RabbitMQ)
+# ==============================================================================
+
+# --- POSTGRES ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
-  namespace: app
+  labels:
+    app: postgres
 spec:
   replicas: 1
-  selector: { matchLabels: { app: postgres } }
+  selector:
+    matchLabels:
+      app: postgres
   template:
     metadata:
-      labels: { app: postgres }
+      labels:
+        app: postgres
     spec:
       containers:
-        - name: postgres
-          image: postgres:15-alpine
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: POSTGRES_DB
-              valueFrom: { configMapKeyRef: { name: app-config, key: POSTGRES_DB } }
-            - name: POSTGRES_USER
-              valueFrom: { configMapKeyRef: { name: app-config, key: POSTGRES_USER } }
-            - name: POSTGRES_PASSWORD
-              valueFrom: { secretKeyRef: { name: app-secrets, key: POSTGRES_PASSWORD } }
-          ports: [{ containerPort: 5432, name: pg }]
-          volumeMounts:
-            - { name: data, mountPath: /var/lib/postgresql/data }
-            - { name: init, mountPath: /docker-entrypoint-initdb.d }
-          readinessProbe:
-            exec: { command: ["sh","-lc","pg_isready -U $POSTGRES_USER -d $POSTGRES_DB -h 127.0.0.1 -p 5432"] }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: 5432 }
-            initialDelaySeconds: 20
-            periodSeconds: 20
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-init-volume
+          mountPath: /docker-entrypoint-initdb.d
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $(POSTGRES_USER) -d $(POSTGRES_DB)
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
       volumes:
-        - name: data
-          persistentVolumeClaim: { claimName: postgres-pvc }
-        - name: init
-          configMap:
-            name: postgres-init
-            items:
-              - key: init.sql
-                path: init.sql
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-init-volume
+        configMap:
+          name: postgres-init-script
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: app
 spec:
-  selector: { app: postgres }
+  selector:
+    app: postgres
   ports:
-    - name: pg
+    - protocol: TCP
       port: 5432
       targetPort: 5432
+
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: rabbitmq
-  namespace: app
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: rabbitmq } }
-  template:
-    metadata:
-      labels: { app: rabbitmq }
-    spec:
-      containers:
-        - name: rabbitmq
-          image: rabbitmq:3-management-alpine
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: RABBITMQ_DEFAULT_USER
-              valueFrom: { secretKeyRef: { name: app-secrets, key: RABBIT_USER } }
-            - name: RABBITMQ_DEFAULT_PASS
-              valueFrom: { secretKeyRef: { name: app-secrets, key: RABBIT_PASS } }
-          ports:
-            - { containerPort: 5672, name: amqp }
-            - { containerPort: 15672, name: http }
-          volumeMounts:
-            - { name: data, mountPath: /var/lib/rabbitmq }
-          readinessProbe:
-            exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            exec: { command: ["rabbitmq-diagnostics","-q","ping"] }
-            initialDelaySeconds: 20
-            periodSeconds: 20
-      volumes:
-        - name: data
-          persistentVolumeClaim: { claimName: rabbitmq-pvc }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: rabbitmq
-  namespace: app
-spec:
-  selector: { app: rabbitmq }
-  ports:
-    - { name: amqp, port: 5672, targetPort: 5672 }
-    - { name: http, port: 15672, targetPort: 15672 }
----
+# --- MINIO ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: minio
-  namespace: app
+  labels:
+    app: minio
 spec:
   replicas: 1
-  selector: { matchLabels: { app: minio } }
+  selector:
+    matchLabels:
+      app: minio
   template:
     metadata:
-      labels: { app: minio }
+      labels:
+        app: minio
     spec:
       containers:
-        - name: minio
-          image: minio/minio:latest
-          imagePullPolicy: IfNotPresent
-          args: ["server","/data","--console-address",":9001"]
-          env:
-            - name: MINIO_ROOT_USER
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ACCESS_KEY } }
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_SECRET_KEY } }
-          ports:
-            - { containerPort: 9000, name: s3 }
-            - { containerPort: 9001, name: console }
-          volumeMounts:
-            - { name: data, mountPath: /data }
-          readinessProbe:
-            httpGet: { path: /minio/health/ready, port: 9000 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            httpGet: { path: /minio/health/live, port: 9000 }
-            initialDelaySeconds: 20
-            periodSeconds: 20
+      - name: minio
+        image: minio/minio:latest
+        ports:
+        - containerPort: 9000
+        - containerPort: 9001
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_SECRET_KEY
+        args: ["server", "/data", "--console-address", ":9001"]
+        volumeMounts:
+        - name: minio-data
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - mc --version >/dev/null 2>&1 || (wget -qO /bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x /bin/mc); mc alias set local http://127.0.0.1:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} >/dev/null 2>&1 && mc ready local
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 7
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - mc --version >/dev/null 2>&1 || (wget -qO /bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x /bin/mc); mc alias set local http://127.0.0.1:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} >/dev/null 2>&1 && mc ready local
+          initialDelaySeconds: 20
+          periodSeconds: 15
+          timeoutSeconds: 7
       volumes:
-        - name: data
-          persistentVolumeClaim: { claimName: minio-pvc }
+      - name: minio-data
+        persistentVolumeClaim:
+          claimName: minio-pvc
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: minio
-  namespace: app
 spec:
-  selector: { app: minio }
+  selector:
+    app: minio
   ports:
-    - { name: s3, port: 9000, targetPort: 9000 }
-    - { name: console, port: 9001, targetPort: 9001 }
+    - name: api
+      protocol: TCP
+      port: 9000
+      targetPort: 9000
+    - name: console
+      protocol: TCP
+      port: 9001
+      targetPort: 9001
+
 ---
+# --- RABBITMQ ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: auth-service
-  namespace: app
+  name: rabbitmq
+  labels:
+    app: rabbitmq
 spec:
   replicas: 1
-  selector: { matchLabels: { app: auth-service } }
+  selector:
+    matchLabels:
+      app: rabbitmq
   template:
     metadata:
-      labels: { app: auth-service }
+      labels:
+        app: rabbitmq
     spec:
       containers:
-        - name: app
-          image: auth_service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: SECRET_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: SECRET_KEY } }
-            - name: DATABASE_URL
-              valueFrom: { configMapKeyRef: { name: app-config, key: AUTH_DATABASE_URL } }
-          ports: [{ containerPort: 8000, name: http }]
-          readinessProbe:
-            tcpSocket: { port: 8000 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: 8000 }
-            initialDelaySeconds: 20
-            periodSeconds: 20
-      initContainers:
-        - name: wait-postgres
-          image: busybox
-          command: ["sh","-c","until nc -z postgres.app.svc.cluster.local 5432; do sleep 1; done"]
-        - name: wait-rabbit
-          image: busybox
-          command: ["sh","-c","until nc -z rabbitmq.app.svc.cluster.local 5672; do sleep 1; done"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: auth-service
-  namespace: app
-spec:
-  selector: { app: auth-service }
-  ports:
-    - { name: http, port: 8000, targetPort: 8000 }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: chat-service
-  namespace: app
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: chat-service } }
-  template:
-    metadata:
-      labels: { app: chat-service }
-    spec:
-      containers:
-        - name: app
-          image: chat_service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: DATABASE_URL
-              valueFrom: { configMapKeyRef: { name: app-config, key: CHAT_DATABASE_URL } }
-            - name: MINIO_ENDPOINT
-              valueFrom: { configMapKeyRef: { name: app-config, key: MINIO_ENDPOINT } }
-            - name: MINIO_ACCESS_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ACCESS_KEY } }
-            - name: MINIO_SECRET_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_SECRET_KEY } }
-            - name: ECG_BUCKET
-              valueFrom: { configMapKeyRef: { name: app-config, key: ECG_BUCKET } }
-            - name: RABBIT_URL
-              valueFrom: { configMapKeyRef: { name: app-config, key: RABBIT_URL } }
-            - name: REQUEST_QUEUE
-              valueFrom: { configMapKeyRef: { name: app-config, key: REQUEST_QUEUE } }
-          ports: [{ containerPort: 8080, name: http }]
-          readinessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 20
-            periodSeconds: 20
-      initContainers:
-        - name: wait-postgres
-          image: busybox
-          command: ["sh","-c","until nc -z postgres.app.svc.cluster.local 5432; do sleep 1; done"]
-        - name: wait-minio
-          image: busybox
-          command: ["sh","-c","until nc -z minio.app.svc.cluster.local 9000; do sleep 1; done"]
-        - name: wait-rabbit
-          image: busybox
-          command: ["sh","-c","until nc -z rabbitmq.app.svc.cluster.local 5672; do sleep 1; done"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chat-service
-  namespace: app
-spec:
-  selector: { app: chat-service }
-  ports:
-    - { name: http, port: 8080, targetPort: 8080 }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ecg-analysis-service
-  namespace: app
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: ecg-analysis-service } }
-  template:
-    metadata:
-      labels: { app: ecg-analysis-service }
-    spec:
-      containers:
-        - name: app
-          image: ecg_analysis_service:latest
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: RABBIT_URL
-              valueFrom: { configMapKeyRef: { name: app-config, key: RABBIT_URL } }
-            - name: MINIO_ENDPOINT
-              valueFrom: { configMapKeyRef: { name: app-config, key: MINIO_ENDPOINT } }
-            - name: MINIO_ACCESS_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_ACCESS_KEY } }
-            - name: MINIO_SECRET_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: MINIO_SECRET_KEY } }
-            - name: REQUEST_QUEUE
-              valueFrom: { configMapKeyRef: { name: app-config, key: REQUEST_QUEUE } }
-            - name: RESPONSE_QUEUE
-              valueFrom: { configMapKeyRef: { name: app-config, key: RESPONSE_QUEUE } }
-            - name: OPENAI_API_KEY
-              valueFrom: { secretKeyRef: { name: app-secrets, key: OPENAI_API_KEY } }
-          ports: [{ containerPort: 8080, name: http }]
-          readinessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: 8080 }
-            initialDelaySeconds: 20
-            periodSeconds: 20
-      initContainers:
-        - name: wait-minio
-          image: busybox
-          command: ["sh","-c","until nc -z minio.app.svc.cluster.local 9000; do sleep 1; done"]
-        - name: wait-rabbit
-          image: busybox
-          command: ["sh","-c","until nc -z rabbitmq.app.svc.cluster.local 5672; do sleep 1; done"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ecg-analysis-service
-  namespace: app
-spec:
-  selector: { app: ecg-analysis-service }
-  ports:
-    - { name: http, port: 8080, targetPort: 8080 }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: frontend
-  namespace: app
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: frontend } }
-  template:
-    metadata:
-      labels: { app: frontend }
-    spec:
-      containers:
-        - name: app
-          image: frontend:latest
-          imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 8000, name: http }]
-          readinessProbe:
-            tcpSocket: { port: 8000 }
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: 8000 }
-            initialDelaySeconds: 15
-            periodSeconds: 20
-      initContainers:
-        - name: wait-rabbit
-          image: busybox
-          command: ["sh","-c","until nc -z rabbitmq.app.svc.cluster.local 5672; do sleep 1; done"]
-        - name: wait-minio
-          image: busybox
-          command: ["sh","-c","until nc -z minio.app.svc.cluster.local 9000; do sleep 1; done"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: frontend
-  namespace: app
-spec:
-  selector: { app: frontend }
-  ports:
-    - { name: http, port: 8000, targetPort: 8000 }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: api-gateway
-  namespace: app
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: api-gateway } }
-  template:
-    metadata:
-      labels: { app: api-gateway }
-    spec:
-      containers:
-        - name: nginx
-          image: nginx:alpine
-          imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 80, name: http }]
-          volumeMounts:
-            - name: nginx-conf
-              mountPath: /etc/nginx/nginx.conf
-              subPath: nginx.conf
-          readinessProbe:
-            httpGet: { path: /, port: 80 }
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet: { path: /, port: 80 }
-            initialDelaySeconds: 15
-            periodSeconds: 20
+      - name: rabbitmq
+        image: rabbitmq:3-management-alpine
+        ports:
+        - containerPort: 5672
+        - containerPort: 15672
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_PASS
+        volumeMounts:
+        - name: rabbitmq-data
+          mountPath: /var/lib/rabbitmq
+        livenessProbe:
+          exec:
+            command: ["rabbitmq-diagnostics", "-q", "ping"]
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command: ["rabbitmq-diagnostics", "-q", "ping"]
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
       volumes:
-        - name: nginx-conf
-          configMap:
-            name: nginx-conf
-            items:
-              - key: nginx.conf
-                path: nginx.conf
-      initContainers:
-        - name: wait-auth
-          image: busybox
-          command: ["sh","-c","until nc -z auth-service.app.svc.cluster.local 8000; do sleep 1; done"]
-        - name: wait-chat
-          image: busybox
-          command: ["sh","-c","until nc -z chat-service.app.svc.cluster.local 8080; do sleep 1; done"]
-        - name: wait-ecg
-          image: busybox
-          command: ["sh","-c","until nc -z ecg-analysis-service.app.svc.cluster.local 8080; do sleep 1; done"]
-        - name: wait-front
-          image: busybox
-          command: ["sh","-c","until nc -z frontend.app.svc.cluster.local 8000; do sleep 1; done"]
+      - name: rabbitmq-data
+        persistentVolumeClaim:
+          claimName: rabbitmq-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      protocol: TCP
+      port: 5672
+      targetPort: 5672
+    - name: management
+      protocol: TCP
+      port: 15672
+      targetPort: 15672
+
+---
+# ==============================================================================
+# 5. APPLICATION SERVICES DEPLOYMENTS
+# ==============================================================================
+
+# --- AUTH SERVICE ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        # Замените на ваш образ или используйте локальную сборку
+        image: stepoik/pr8_auth_service:latest
+        # Для локальной разработки можно использовать: imagePullPolicy: Never
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: SECRET_KEY
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_DB
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_PASS
+        - name: RABBIT_URL
+          value: "amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/%2F"
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - python -c "import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); print('ok')"
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 90
+          periodSeconds: 30
+          timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+
+---
+# --- CHAT SERVICE ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service
+  labels:
+    app: chat-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat-service
+  template:
+    metadata:
+      labels:
+        app: chat-service
+    spec:
+      containers:
+      - name: chat-service
+        # Замените на ваш образ или используйте локальную сборку
+        image: stepoik/pr8_chat_service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: POSTGRES_DB
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: MINIO_ENDPOINT
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_SECRET_KEY
+        - name: ECG_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: ECG_BUCKET
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_PASS
+        - name: RABBIT_URL
+          value: "amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/%2F"
+        - name: REQUEST_QUEUE
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: REQUEST_QUEUE
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8080)); s.close(); print('ok')"
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service
+spec:
+  selector:
+    app: chat-service
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+# --- ECG ANALYSIS SERVICE ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecg-analysis-service
+  labels:
+    app: ecg-analysis-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ecg-analysis-service
+  template:
+    metadata:
+      labels:
+        app: ecg-analysis-service
+    spec:
+      containers:
+      - name: ecg-analysis-service
+        # Замените на ваш образ или используйте локальную сборку
+        image: stepoik/pr8_ecg_analysis_service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: GITHUB_REPO_OWNER
+          value: "stepoik"
+        - name: GITHUB_REPO_NAME
+          value: "pr_8_config"
+        - name: GITHUB_BRANCH
+          value: "main"
+        - name: APPLICATION_NAME
+          value: "ecg_analysis_service"
+        - name: PROFILE_NAME
+          value: "test"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: OPENAI_API_KEY
+        - name: MINIO_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: MINIO_ENDPOINT
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_ACCESS_KEY
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MINIO_SECRET_KEY
+        - name: REQUEST_QUEUE
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: REQUEST_QUEUE
+        - name: RESPONSE_QUEUE
+          valueFrom:
+            configMapKeyRef:
+              name: app-static-config
+              key: RESPONSE_QUEUE
+        - name: RABBITMQ_DEFAULT_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_USER
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: RABBITMQ_DEFAULT_PASS
+        - name: RABBIT_URL
+          value: "amqp://$(RABBITMQ_DEFAULT_USER):$(RABBITMQ_DEFAULT_PASS)@rabbitmq:5672/%2F"
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - |
+              python - <<'PY'
+              import pika,os,sys
+              import socket
+              # RabbitMQ
+              params=pika.URLParameters(os.getenv('RABBIT_URL','amqp://guest:guest@rabbitmq:5672/%2F'))
+              conn=pika.BlockingConnection(params)
+              conn.close()
+              # MinIO TCP
+              h=os.getenv('MINIO_ENDPOINT','minio:9000').split(':')[0]
+              p=int(os.getenv('MINIO_ENDPOINT','minio:9000').split(':')[1])
+              s=socket.socket()
+              s.settimeout(2)
+              s.connect((h,p))
+              s.close()
+              print('ok')
+              PY
+          initialDelaySeconds: 40
+          periodSeconds: 15
+          timeoutSeconds: 7
+          failureThreshold: 10
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ecg-analysis-service
+spec:
+  selector:
+    app: ecg-analysis-service
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+---
+# --- FRONTEND ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        # Замените на ваш образ или используйте локальную сборку
+        image: stepoik/pr8_frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); print('ok')"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 12
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+
+---
+# --- NGINX GATEWAY ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config-volume
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: nginx-logs
+          mountPath: /var/log/nginx
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: nginx-config-volume
+        configMap:
+          name: nginx-config
+      - name: nginx-logs
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: api-gateway
-  namespace: app
 spec:
-  selector: { app: api-gateway }
+  type: LoadBalancer
+  selector:
+    app: api-gateway
   ports:
-    - { name: http, port: 80, targetPort: 80 }
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: app-ingress
-  namespace: app
-  annotations:
-    kubernetes.io/ingress.class: "nginx"
-spec:
-  rules:
-    - host: local.api
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: api-gateway
-                port:
-                  number: 80
+    - protocol: TCP
+      port: 80
+      targetPort: 80

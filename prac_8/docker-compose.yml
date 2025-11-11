@@ -26,7 +26,6 @@ services:
     ports: ["8000:8000"]
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret}
-      # ВАЖНО: либо создавай auth_user/auth_db в init.sql, либо выровняй URL под user/password/postgres:
       - DATABASE_URL=${AUTH_DATABASE_URL:-postgresql://user:password@postgres:5432/postgres}
     depends_on:
       postgres:
@@ -34,7 +33,6 @@ services:
       rabbitmq:
         condition: service_healthy
     healthcheck:
-      # проверяем, что порт 8000 слушает (без curl)
       test: ["CMD-SHELL", "python -c \"import socket,sys; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1',8000)); s.close(); print('ok')\""]
       interval: 10s
       timeout: 5s
@@ -83,6 +81,11 @@ services:
       - REQUEST_QUEUE=${REQUEST_QUEUE:-ecg_requests}
       - RESPONSE_QUEUE=${RESPONSE_QUEUE:-ecg_responses}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GITHUB_REPO_OWNER=stepoik
+      - GITHUB_REPO_NAME=pr_8_config
+      - GITHUB_BRANCH=main
+      - APPLICATION_NAME=ecg_analysis_service
+      - PROFILE_NAME=test
     depends_on:
       rabbitmq:
         condition: service_healthy

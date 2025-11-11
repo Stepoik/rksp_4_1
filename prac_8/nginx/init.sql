@@ -14,6 +14,6 @@ GRANT ALL PRIVILEGES ON DATABASE chat_db TO chat_user;
 \c auth_db;
 GRANT ALL ON SCHEMA public TO auth_user;
 
--- Connect to chat_db and create schema  
+-- Connect to chat_db and create schema
 \c chat_db;
 GRANT ALL ON SCHEMA public TO chat_user;
