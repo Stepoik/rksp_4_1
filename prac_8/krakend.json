@@ -1,0 +1,187 @@
+{
+  "version": 3,
+  "name": "KrakenD Gateway",
+  "port": 8001,
+  "cache_ttl": 300,
+  "debug": true,
+  "log_level": "DEBUG",
+  "debug_endpoint": true,
+  "echo_endpoint": true,
+  "timeout": "10s",
+  "endpoints": [
+    {
+      "endpoint": "/v1/measurements/{id}",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "output_headers": [
+        "user-id"
+      ],
+      "extra_config": {
+        "proxy": {
+          "sequential": true,
+          "sequential_propagated_params": ["resp0_user_id"]
+        }
+      },
+      "backend": [
+         {
+          "encoding": "json",
+          "url_pattern": "/verify",
+          "method": "GET",
+          "host": [
+            "http://auth_service:8000"
+          ]
+        },
+        {
+          "url_pattern": "/v1/measurements/{id}",
+          "method": "GET",
+          "host": [
+            "http://chat_service:8080"
+          ],
+          "input_headers": [
+            "user-id"
+          ],
+          "extra_config": {
+            "modifier/lua-backend": {
+              "sources": [
+                "./script.lua"
+              ],
+              "pre": "set_user_header(request.load());",
+              "allow_open_libs": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/measurements",
+      "method": "GET",
+      "extra_config": {
+        "proxy": {
+          "sequential": true,
+          "sequential_propagated_params": ["resp0_user_id"]
+        }
+      },
+      "input_headers": [
+        "Authorization"
+      ],
+
+      "backend": [
+        {
+          "encoding": "json",
+          "url_pattern": "/verify",
+          "method": "GET",
+          "host": [
+            "http://auth_service:8000"
+          ]
+        },
+        {
+          "url_pattern": "/v1/measurements",
+          "method": "GET",
+          "host": [
+            "http://chat_service:8080"
+          ],
+          "input_headers": [
+            "user-id"
+          ],
+          "extra_config": {
+            "modifier/lua-backend": {
+              "sources": [
+                "./script.lua"
+              ],
+              "pre": "set_user_header(request.load());",
+              "allow_open_libs": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/test-verify",
+      "method": "GET",
+      "input_headers": [
+        "Authorization"
+      ],
+      "extra_config": {
+        "backend/http/client": {
+          "return_headers": [
+            "X-User-Id"
+          ]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/verify",
+          "method": "GET",
+          "host": [
+            "http://auth_service:8000"
+          ],
+          "extra_config": {
+            "backend/http/client": {
+              "return_headers": [
+                "X-User-Id"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/measurements",
+      "method": "POST",
+      "backend": [
+        {
+          "url_pattern": "/v1/measurements",
+          "method": "POST",
+          "host": [
+            "http://chat_service:8080"
+          ],
+          "disable_host_sanitize": false
+        }
+      ]
+    },
+    {
+      "endpoint": "/ws/{user_id}",
+      "method": "GET",
+      "backend": [
+        {
+          "url_pattern": "/ws/{user_id}",
+          "method": "GET",
+          "host": [
+            "http://chat_service:8080"
+          ],
+          "disable_host_sanitize": false
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/auth/register",
+      "method": "POST",
+      "backend": [
+        {
+          "url_pattern": "/register",
+          "method": "POST",
+          "host": [
+            "http://auth_service:8000"
+          ],
+          "disable_host_sanitize": false
+        }
+      ]
+    },
+    {
+      "endpoint": "/v1/auth/login",
+      "method": "POST",
+      "backend": [
+        {
+          "url_pattern": "/login",
+          "method": "POST",
+          "host": [
+            "http://auth_service:8000"
+          ],
+          "disable_host_sanitize": false
+        }
+      ]
+    }
+  ]
+}

@@ -9,7 +9,7 @@
 <body>
   <div class="container">
     <h1 id="title">Вход</h1>
-    <form id="login-form" method="post" action="/auth/login">
+    <form id="login-form" method="post" action="/v1/auth/login">
       <label for="username">Логин</label>
       <input id="username" name="username" type="text" required />
 
@@ -24,7 +24,7 @@
     <hr style="margin:18px 0; border: none; border-top: 1px solid #334155;" />
 
     <h2 style="margin:0 0 10px; font-size:18px;" id="reg-title">Регистрация</h2>
-    <form id="register-form" action="/auth/register" style="display:none;">
+    <form id="register-form" action="/v1/auth/register" style="display:none;">
       <label for="reg-username">Логин</label>
       <input id="reg-username" name="username" type="text" minlength="3" maxlength="64" required />
 

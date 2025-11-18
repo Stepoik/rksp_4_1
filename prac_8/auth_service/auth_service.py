@@ -150,7 +150,7 @@ def verify(token: str = Depends(oauth2_scheme)):
     payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     sub = payload.get("sub")
     return JSONResponse(
-        content={"active": True},
+        content={"active": True, "user_id": str(sub)},
         headers={"X-User-Id": str(sub)},
         status_code=200,
     )
