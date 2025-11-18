@@ -21,11 +21,13 @@
       "extra_config": {
         "proxy": {
           "sequential": true,
-          "sequential_propagated_params": ["resp0_user_id"]
+          "sequential_propagated_params": [
+            "resp0_user_id"
+          ]
         }
       },
       "backend": [
-         {
+        {
           "encoding": "json",
           "url_pattern": "/verify",
           "method": "GET",
@@ -60,13 +62,14 @@
       "extra_config": {
         "proxy": {
           "sequential": true,
-          "sequential_propagated_params": ["resp0_user_id"]
+          "sequential_propagated_params": [
+            "resp0_user_id"
+          ]
         }
       },
       "input_headers": [
         "Authorization"
       ],
-
       "backend": [
         {
           "encoding": "json",
@@ -98,45 +101,49 @@
       ]
     },
     {
-      "endpoint": "/test-verify",
-      "method": "GET",
-      "input_headers": [
-        "Authorization"
-      ],
+      "endpoint": "/v1/measurements",
+      "method": "POST",
       "extra_config": {
-        "backend/http/client": {
-          "return_headers": [
-            "X-User-Id"
+        "proxy": {
+          "sequential": true,
+          "sequential_propagated_params": [
+            "resp0_user_id"
           ]
         }
       },
+      "input_headers": [
+        "Content-Type",
+        "Authorization"
+      ],
       "backend": [
         {
+          "encoding": "json",
           "url_pattern": "/verify",
           "method": "GET",
           "host": [
             "http://auth_service:8000"
-          ],
-          "extra_config": {
-            "backend/http/client": {
-              "return_headers": [
-                "X-User-Id"
-              ]
-            }
-          }
-        }
-      ]
-    },
-    {
-      "endpoint": "/v1/measurements",
-      "method": "POST",
-      "backend": [
+          ]
+        },
         {
+          "encoding": "no-op",
           "url_pattern": "/v1/measurements",
           "method": "POST",
           "host": [
             "http://chat_service:8080"
           ],
+          "input_headers": [
+            "Content-Type",
+            "user-id"
+          ],
+          "extra_config": {
+            "modifier/lua-backend": {
+              "sources": [
+                "./script.lua"
+              ],
+              "pre": "set_user_header(request.load());",
+              "allow_open_libs": true
+            }
+          },
           "disable_host_sanitize": false
         }
       ]

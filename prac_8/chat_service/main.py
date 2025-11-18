@@ -110,7 +110,6 @@ async def get_user_measurements(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    print("user id", user_id)
     measurement_service = MeasurementService(db, asyncio.get_running_loop())
     measurements = measurement_service.get_user_measurements(user_id, limit, offset)
     
