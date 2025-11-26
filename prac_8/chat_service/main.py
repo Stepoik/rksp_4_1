@@ -1,9 +1,15 @@
 import asyncio
+import os
 import uuid
 from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header, WebSocketDisconnect
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from sqlalchemy.orm import Session
 from starlette.websockets import WebSocket
 
@@ -14,7 +20,22 @@ from websocket_manager import websocket_manager
 
 load_dotenv()
 
+JAEGER_URL = os.getenv("JAEGER_URL")
+resource = Resource.create({
+    "service.name": "chat_service"
+})
+provider = TracerProvider(resource=resource)
+processor = BatchSpanProcessor(
+    OTLPSpanExporter(endpoint=JAEGER_URL)
+)
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
+
+from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
 app = FastAPI(title="ECG Measurements API", version="1.0")
+FastAPIInstrumentor.instrument_app(app)
 
 init_db()
 

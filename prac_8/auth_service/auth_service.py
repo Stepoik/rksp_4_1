@@ -5,6 +5,11 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import BaseModel, EmailStr, constr
 from sqlalchemy import Column, Integer, String, create_engine, select, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -17,6 +22,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./auth.db")
+JAEGER_URL = os.getenv("JAEGER_URL")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -27,6 +33,16 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+resource = Resource.create({
+    "service.name": "auth_service"
+})
+provider = TracerProvider(resource=resource)
+processor = BatchSpanProcessor(
+    OTLPSpanExporter(endpoint=JAEGER_URL)
+)
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
 
 class User(Base):
     __tablename__ = "users"
@@ -119,7 +135,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 # ===================== Приложение =====================
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
 app = FastAPI(title="Auth Service", version="1.0.0")
+FastAPIInstrumentor.instrument_app(app)
 
 @app.post("/register", response_model=RegisterOut, status_code=201)
 def register(body: RegisterIn, db: Session = Depends(get_db)):

@@ -1,6 +1,17 @@
 version: '3.8'
 
 services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"    # UI
+      - "6831:6831/udp"  # Jaeger Thrift
+      - "4317:4317"      # OTLP gRPC
+      - "4318:4318"      # OTLP HTTP
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      [ app_network ]
   nginx:
     image: nginx:alpine
     container_name: api_gateway
@@ -21,7 +32,9 @@ services:
     networks: [ app_network ]
 
   krakend:
-    image: devopsfaith/krakend:2.9.4
+    image: krakend:2.12.0
+    environment:
+      - JAEGER_URL=http://jaeger:4318
     volumes:
       - ./krakend.json:/etc/krakend/krakend.json
       - ./script.lua:/etc/krakend/script.lua
@@ -35,6 +48,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret}
       - DATABASE_URL=${AUTH_DATABASE_URL:-postgresql://user:password@postgres:5432/postgres}
+      - JAEGER_URL=http://jaeger:4318/v1/traces
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +74,7 @@ services:
       - ECG_BUCKET=${ECG_BUCKET:-ecg-bucket}
       - RABBIT_URL=${RABBIT_URL:-amqp://guest:guest@rabbitmq:5672/%2F}
       - REQUEST_QUEUE=${REQUEST_QUEUE:-ecg_requests}
+      - JAEGER_URL=http://jaeger:4318/v1/traces
     depends_on:
       postgres:
         condition: service_healthy

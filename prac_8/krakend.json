@@ -8,6 +8,44 @@
   "debug_endpoint": true,
   "echo_endpoint": true,
   "timeout": "10s",
+  "extra_config": {
+    "telemetry/opentelemetry": {
+      "service_name": "krakend",
+      "metric_reporting_period": 1,
+      "trace_sample_rate": 1.0,
+      "layers": {
+        "global": {
+          "report_headers": true
+        },
+        "proxy": {
+          "report_headers": true
+        },
+        "backend": {
+          "metrics": {
+            "disable_stage": true
+          },
+          "traces": {
+            "disable_stage": false,
+            "round_trip": true,
+            "read_payload": true,
+            "detailed_connection": true,
+            "report_headers": true
+          }
+        }
+      },
+      "exporters": {
+        "otlp": [
+          {
+            "name": "local_jaeger",
+            "host": "jaeger",
+            "port": 4318,
+            "use_http": true,
+            "disable_metrics": true
+          }
+        ]
+      }
+    }
+  },
   "endpoints": [
     {
       "endpoint": "/v1/measurements/{id}",
